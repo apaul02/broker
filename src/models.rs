@@ -21,6 +21,11 @@ pub enum Command {
         payload: Bytes,
         responder: oneshot::Sender<Result<u64, String>>,
     },
+    Fetch {
+        topic_name: String,
+        offset: u64,
+        responder: oneshot::Sender<Result<Bytes, String>>,
+    },
 }
 
 pub struct BrokerState {
@@ -48,6 +53,23 @@ impl BrokerState {
                     };
                     topic.message.push(message);
                     let _ = responder.send(Ok(offset));
+                }
+                Command::Fetch {
+                    topic_name,
+                    offset,
+                    responder,
+                } => {
+                    let res = self.topics.get(&topic_name);
+                    if let Some(payload) = res {
+                        if offset < payload.message.len() as u64 {
+                            let _ = responder
+                                .send(Ok(payload.message[offset as usize].payload.clone()));
+                        } else {
+                            let _ = responder.send(Err("Offset Out of Bounds".to_string()));
+                        }
+                    } else {
+                        let _ = responder.send(Err("Topic not found".to_string()));
+                    }
                 }
             }
         }

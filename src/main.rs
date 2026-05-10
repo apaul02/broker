@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use tokio::sync::mpsc;
+use tokio::io::AsyncBufReadExt;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use crate::models::{BrokerState, Command};
 
 pub mod models;
 #[tokio::main]
 async fn main() {
-    let (tx, mut rx) = mpsc::channel::<Command>(1024);
+    let (tx, rx) = mpsc::channel::<Command>(1024);
     let state = BrokerState {
         topics: HashMap::new(),
     };
@@ -19,16 +20,72 @@ async fn main() {
         .await
         .unwrap();
     loop {
-        let a = socket.accept().await.unwrap();
+        let (stream, _) = socket.accept().await.unwrap();
         let t = tx.clone();
+        let (read, mut writer) = stream.into_split();
         tokio::spawn(async move {
-            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-            let cmd = Command::Publish {
-                topic_name: "Idk".to_string(),
-                payload: Bytes::from("yooo"),
-                responder: resp_tx,
-            };
-            t.send(cmd).await.unwrap();
+            let mut reader = tokio::io::BufReader::new(read);
+            loop {
+                let mut s = String::new();
+                let res = reader.read_line(&mut s).await;
+                if let Ok(0) = res {
+                    break;
+                }
+                let mut parts = s.split_whitespace();
+                let cmd = parts.next();
+                if let Some(c) = cmd {
+                    match c {
+                        "PUBLISH" => {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            if let (Some(topic), Some(payload)) = (parts.next(), parts.next()) {
+                                let command = Command::Publish {
+                                    topic_name: topic.to_string(),
+                                    payload: Bytes::from(payload.to_string()),
+                                    responder: resp_tx,
+                                };
+                                t.send(command).await.unwrap();
+
+                                let res = resp_rx.await.unwrap();
+                                if let Ok(_a) = res {
+                                    let _ = writer.write(b"Success\n").await;
+                                }
+                            } else {
+                                let _ = writer.write(b"ERROR: BAD FORMAT\n").await;
+                            }
+                        }
+                        "FETCH" => {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            if let (Some(topic), Some(offset)) = (parts.next(), parts.next()) {
+                                let offset = offset.parse::<u64>();
+                                if let Ok(o) = offset {
+                                    let command = Command::Fetch {
+                                        topic_name: topic.to_string(),
+                                        offset: o,
+                                        responder: resp_tx,
+                                    };
+                                    t.send(command).await.unwrap();
+                                    let res = resp_rx.await.unwrap();
+                                    match res {
+                                        Ok(payload) => {
+                                            let data = [payload.as_ref(), b"\n"].concat();
+                                            let _ = writer.write(&data).await;
+                                        }
+                                        Err(e) => {
+                                            let response = format!("{}\n", e);
+                                            let _ = writer.write(response.as_bytes()).await;
+                                        }
+                                    }
+                                } else {
+                                    let _ = writer.write(b"Error parsing offset\n").await;
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = writer.write(b"WILL BE IMPLEMENTED\n").await;
+                        }
+                    }
+                }
+            }
         });
     }
 }
