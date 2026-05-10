@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bytes::Bytes;
 use tokio::io::AsyncBufReadExt;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
@@ -10,9 +8,11 @@ pub mod models;
 #[tokio::main]
 async fn main() {
     let (tx, rx) = mpsc::channel::<Command>(1024);
-    let state = BrokerState {
-        topics: HashMap::new(),
-    };
+    let state = BrokerState::restore().await;
+    println!(
+        "Broker booted! Recovered {} topics from disk.",
+        state.topics.len()
+    );
     tokio::spawn(async move {
         state.listen(rx).await;
     });
