@@ -30,6 +30,16 @@ pub enum Command {
         offset: u64,
         responder: oneshot::Sender<Result<Bytes, String>>,
     },
+    FetchNext {
+        topic_name: String,
+        group_name: String,
+        responder: oneshot::Sender<Result<Bytes, String>>,
+    },
+    Ack {
+        topic_name: String,
+        group_name: String,
+        responder: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 pub struct BrokerState {
@@ -93,6 +103,36 @@ impl BrokerState {
                         }
                     } else {
                         let _ = responder.send(Err("Topic not found".to_string()));
+                    }
+                }
+                Command::FetchNext {
+                    topic_name,
+                    group_name,
+                    responder,
+                } => {
+                    if let Some(topic) = self.topics.get_mut(&topic_name) {
+                        let offset = topic.consumer_groups.entry(group_name).or_insert(0);
+                        if *offset >= topic.message.len() as u64 {
+                            let _ = responder.send(Err("No new Message".to_string()));
+                        } else {
+                            let message = topic.message[*offset as usize].payload.clone();
+                            let _ = responder.send(Ok(message));
+                        }
+                    } else {
+                        let _ = responder.send(Err("Topic doesnt exists".to_string()));
+                    }
+                }
+                Command::Ack {
+                    topic_name,
+                    group_name,
+                    responder,
+                } => {
+                    if let Some(topic) = self.topics.get_mut(&topic_name) {
+                        let offset = topic.consumer_groups.entry(group_name).or_insert(0);
+                        *offset += 1;
+                        let _ = responder.send(Ok(()));
+                    } else {
+                        let _ = responder.send(Err("Topic doesnt exists".to_string()));
                     }
                 }
             }

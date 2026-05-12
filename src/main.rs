@@ -80,6 +80,57 @@ async fn main() {
                                 }
                             }
                         }
+                        "FETCH_NEXT" => {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            if let (Some(group_name), Some(topic_name)) =
+                                (parts.next(), parts.next())
+                            {
+                                let command = Command::FetchNext {
+                                    topic_name: topic_name.to_string(),
+                                    group_name: group_name.to_string(),
+                                    responder: resp_tx,
+                                };
+                                t.send(command).await.unwrap();
+                                let res = resp_rx.await.unwrap();
+                                match res {
+                                    Ok(payload) => {
+                                        let data = [payload.as_ref(), b"\n"].concat();
+                                        let _ = writer.write(&data).await;
+                                    }
+                                    Err(e) => {
+                                        let response = format!("{}\n", e);
+                                        let _ = writer.write(response.as_bytes()).await;
+                                    }
+                                }
+                            } else {
+                                let _ = writer.write(b"Error parsing command\n").await;
+                            }
+                        }
+                        "ACK" => {
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            if let (Some(group_name), Some(topic_name)) =
+                                (parts.next(), parts.next())
+                            {
+                                let command = Command::Ack {
+                                    topic_name: topic_name.to_string(),
+                                    group_name: group_name.to_string(),
+                                    responder: resp_tx,
+                                };
+                                t.send(command).await.unwrap();
+                                let res = resp_rx.await.unwrap();
+                                match res {
+                                    Ok(()) => {
+                                        let _ = writer.write(b"ACK_ON\n").await;
+                                    }
+                                    Err(e) => {
+                                        let response = format!("{}\n", e);
+                                        let _ = writer.write(response.as_bytes()).await;
+                                    }
+                                }
+                            } else {
+                                let _ = writer.write(b"Error parsing command\n").await;
+                            }
+                        }
                         _ => {
                             let _ = writer.write(b"WILL BE IMPLEMENTED\n").await;
                         }
